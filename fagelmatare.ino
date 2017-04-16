@@ -1,4 +1,7 @@
 #include <Arduino.h>
+#include <serializer.h>
+#include <events.h>
+
 /*
  * Hardware specifications used in voltage divider (see designator R10)
  */
@@ -11,6 +14,8 @@
 #define A 0.0027713f
 #define B 0.0002516f
 #define C 0.0000003f
+
+float lastTemperature;
 
 /*
  * In order to calculate the median we need a function to sort an array.
@@ -75,16 +80,68 @@ float measure_median_temperature() {
   return calculate_temperature(temperatures[2]);
 }
 
-void setup() {
-  Serial.begin(9600);
+void deserializeStringEvent (String serialized, struct fgevent *fgev)
+{
+    char buffer[serialized.length () + 1];
+    serialized.toCharArray (buffer, sizeof (buffer));
+
+    deserialize_fgevent (buffer, fgev);
 }
 
-void loop() {
-  if (Serial.available() > 0) {
-    String str = Serial.readStringUntil('\0');
-    if (str == "temperature") {
-      float temperature = measure_median_temperature();
-      Serial.print(temperature);
+void readEvent (struct fgevent *fgev)
+{
+    while (Serial.available () > 0 && Serial.read () != 0x02); // STX
+
+    if (Serial.available () <= 0) return;
+
+    deserializeStringEvent (Serial.readStringUntil (0x03), fgev);
+    
+    while (Serial.available () > 0 && Serial.read () != 0x03); // ETX
+}
+
+void setup ()
+{
+    Serial.begin (9600);
+}
+
+void loop()
+{
+  if (Serial.available () > 0)
+    {
+      struct fgevent fgev;
+      
+      readEvent (&fgev);
+      if (fgev.id == RETRIEVE_TEMP)
+        {
+          lastTemperature = measure_median_temperature (); 
+      
+          if (fgev.writeback)
+            {
+              struct fgevent ansev;    
+              unsigned char buffer[sizeof (struct fgevent) +
+                                   sizeof (lastTemperature) + 2];
+              size_t nbytes;
+              int32_t temperatureX10;
+
+              temperatureX10 = (int32_t)(lastTemperature * 10);
+
+              ansev.id = TEMPERATURE;
+              ansev.writeback = 0;
+              ansev.length = 1;
+              ansev.payload = &temperatureX10;
+
+              nbytes = 2;
+              nbytes += sizeof (ansev.id);
+              nbytes += sizeof (ansev.writeback);
+              nbytes += sizeof (ansev.length);
+              nbytes += sizeof (lastTemperature);
+
+              buffer[0] = 0x02;
+              serialize_fgevent (buffer+1, &ansev);
+              buffer[nbytes-1] = 0x03;
+
+              Serial.write (buffer, nbytes);
+            }
+        }
     }
-  }
 }
