@@ -15,6 +15,10 @@
 #define B 0.0002516f
 #define C 0.0000003f
 
+#define BUF_LEN 16
+
+
+char buffer[BUF_LEN];
 float lastTemperature;
 
 /*
@@ -79,24 +83,43 @@ float measure_median_temperature() {
   sort_array(temperatures, samples);
   return calculate_temperature(temperatures[2]);
 }
-
+/*
 void deserializeStringEvent (String serialized, struct fgevent *fgev)
 {
     char buffer[serialized.length () + 1];
     serialized.toCharArray (buffer, sizeof (buffer));
 
+    for (int i = 0; i < serialized.length (); i++) {
+        Serial.print (String((int)buffer[i], HEX) + " ");
+    }
+    Serial.println();
+
     deserialize_fgevent (buffer, fgev);
 }
-
-void readEvent (struct fgevent *fgev)
+*/
+void parseEvent (char *buffer, struct fgevent *fgev)
 {
-    while (Serial.available () > 0 && Serial.read () != 0x02); // STX
+    char *ptr;
+
+    ptr = buffer;
+    while ((size_t)(ptr - buffer) < BUF_LEN && ptr[0] != 0x02) // STX
+            ptr++;
+
+    // check if buffer is empty
+    if ((size_t)(ptr - buffer) >= BUF_LEN)
+        return;
+
+    deserialize_fgevent (++ptr, fgev);
+    /*
+    int c;
+    while (Serial.available () > 0 && (c = Serial.read ()) != 0x02)
+        Serial.print (String((int)c, HEX) + " ");
+    Serial.println();
 
     if (Serial.available () <= 0) return;
 
-    deserializeStringEvent (Serial.readStringUntil (0x03), fgev);
-    
-    while (Serial.available () > 0 && Serial.read () != 0x03); // ETX
+    Serial.println("Deserializing event\n");
+    deserializeStringEvent (Serial.readStringUntil (0x03), fgev);*/
 }
 
 void setup ()
@@ -109,8 +132,16 @@ void loop()
   if (Serial.available () > 0)
     {
       struct fgevent fgev;
-      
-      readEvent (&fgev);
+      //String serialized;
+  
+      /*serialized = Serial.readStringUntil (0x03);
+      for (int i = 0; i < serialized.length (); i++) {
+          Serial.print (String((int)serialized.charAt (i), HEX) + " ");
+      }*/
+      Serial.readBytesUntil (0x03, buffer, BUF_LEN);
+      parseEvent (buffer, &fgev);
+      //Serial.print("Well, I received something: ");
+      //Serial.println(fgev.id);
       if (fgev.id == RETRIEVE_TEMP)
         {
           lastTemperature = measure_median_temperature (); 
@@ -125,7 +156,7 @@ void loop()
 
               temperatureX10 = (int32_t)(lastTemperature * 10);
 
-              ansev.id = TEMPERATURE;
+              ansev.id = TEMP;
               ansev.writeback = 0;
               ansev.length = 1;
               ansev.payload = &temperatureX10;
@@ -143,5 +174,7 @@ void loop()
               Serial.write (buffer, nbytes);
             }
         }
+
+      if (fgev.length > 0) free (fgev.payload);
     }
 }
