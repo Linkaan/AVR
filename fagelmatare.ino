@@ -15,10 +15,6 @@
 #define B 0.0002516f
 #define C 0.0000003f
 
-#define BUF_LEN 16
-
-
-char buffer[BUF_LEN];
 float lastTemperature;
 
 /*
@@ -83,43 +79,85 @@ float measure_median_temperature() {
   sort_array(temperatures, samples);
   return calculate_temperature(temperatures[2]);
 }
-/*
-void deserializeStringEvent (String serialized, struct fgevent *fgev)
+
+int readFgeventFromSerial (struct fgevent *fgev)
 {
-    char buffer[serialized.length () + 1];
-    serialized.toCharArray (buffer, sizeof (buffer));
+    size_t serial_size;
+    int c, n;
+    unsigned char header_buf[FGEVENT_HEADER_SIZE], *serial_buf;
+    struct fgevent header;
 
-    for (int i = 0; i < serialized.length (); i++) {
-        Serial.print (String((int)buffer[i], HEX) + " ");
-    }
-    Serial.println();
+    do
+      {
+        n = Serial.readBytes (&c, 1);
+      }
+    while (n > 0 && c != 0x02);
 
-    deserialize_fgevent (buffer, fgev);
-}
-*/
-void parseEvent (char *buffer, struct fgevent *fgev)
-{
-    char *ptr;
+    if (n == 0) return 0;
 
-    ptr = buffer;
-    while ((size_t)(ptr - buffer) < BUF_LEN && ptr[0] != 0x02) // STX
-            ptr++;
+    for (int i = 0; i < FGEVENT_HEADER_SIZE; i++)
+      {
+        n = Serial.readBytes (&c, 1);
+        if (n < 0) break;
 
-    // check if buffer is empty
-    if ((size_t)(ptr - buffer) >= BUF_LEN)
-        return;
+        header_buf[i] = (unsigned char) c;
+      }
 
-    deserialize_fgevent (++ptr, fgev);
-    /*
-    int c;
-    while (Serial.available () > 0 && (c = Serial.read ()) != 0x02)
-        Serial.print (String((int)c, HEX) + " ");
-    Serial.println();
+    if (n == 0) return 0;
 
-    if (Serial.available () <= 0) return;
+    deserialize_fgevent_header (header_buf, &header);
 
-    Serial.println("Deserializing event\n");
-    deserializeStringEvent (Serial.readStringUntil (0x03), fgev);*/
+    if (header.length > 0)
+      {
+
+        serial_size = FGEVENT_HEADER_SIZE + header.length;
+
+        serial_buf = malloc (serial_size);
+        if (serial_buf == NULL)
+          {
+            for (int i = 0; i < header.length + 1; i++)
+              {
+                n = Serial.readBytes (&c, 1);
+                if (n < 0) break;
+              }
+            return -1;
+          }
+
+        for (int i = 0; i < serial_size; i++)
+          {
+            if (i < FGEVENT_HEADER_SIZE)
+              {
+                serial_buf[i] = header_buf[i];
+                continue;
+              }
+
+            n = Serial.readBytes (&c, 1);
+            if (n < 0) break;
+
+            serial_buf[i] = (unsigned char) c;
+          }
+
+        if (n == 0)
+          {
+            free (serial_buf);
+            return 0;
+          }
+
+        do
+          {
+            n = Serial.readBytes (&c, 1);
+          }
+        while (n > 0 && c != 0x03);
+
+        deserialize_fgevent (serial_buf, fgev);
+      }
+    else
+      {
+        memcpy (fgev, header, FGEVENT_HEADER_SIZE);
+      }
+
+    free (serial_buf);
+    return 1;
 }
 
 void setup ()
@@ -132,40 +170,31 @@ void loop()
   if (Serial.available () > 0)
     {
       struct fgevent fgev;
-      //String serialized;
-  
-      /*serialized = Serial.readStringUntil (0x03);
-      for (int i = 0; i < serialized.length (); i++) {
-          Serial.print (String((int)serialized.charAt (i), HEX) + " ");
-      }*/
-      Serial.readBytesUntil (0x03, buffer, BUF_LEN);
-      parseEvent (buffer, &fgev);
-      //Serial.print("Well, I received something: ");
-      //Serial.println(fgev.id);
-      if (fgev.id == RETRIEVE_TEMP)
+
+      if (readFgeventFromSerial (&fgev) <= 0) return;
+
+      if (fgev.id == FG_RETRIEVE_TEMP)
         {
           lastTemperature = measure_median_temperature (); 
       
           if (fgev.writeback)
             {
               struct fgevent ansev;    
-              unsigned char buffer[sizeof (struct fgevent) +
-                                   sizeof (lastTemperature) + 2];
+              unsigned char buffer[FGEVENT_HEADER_SIZE + 6];
               size_t nbytes;
               int32_t temperatureX10;
 
               temperatureX10 = (int32_t)(lastTemperature * 10);
 
-              ansev.id = TEMP;
+              ansev.id = FG_TEMP;
+              ansev.receiver = fgev.sender;
               ansev.writeback = 0;
               ansev.length = 1;
               ansev.payload = &temperatureX10;
 
               nbytes = 2;
-              nbytes += sizeof (ansev.id);
-              nbytes += sizeof (ansev.writeback);
-              nbytes += sizeof (ansev.length);
-              nbytes += sizeof (lastTemperature);
+              nbytes += FGEVENT_HEADER_SIZE;
+              nbytes += sizeof (temperatureX10);
 
               buffer[0] = 0x02;
               serialize_fgevent (buffer+1, &ansev);
