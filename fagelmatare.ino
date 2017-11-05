@@ -82,8 +82,8 @@ float measure_median_temperature() {
 
 int readFgeventFromSerial (struct fgevent *fgev)
 {
-    size_t serial_size;
-    int c, n;
+    size_t serial_size, n;
+    byte c;
     unsigned char header_buf[FGEVENT_HEADER_SIZE], *serial_buf;
     struct fgevent header;
 
@@ -112,10 +112,10 @@ int readFgeventFromSerial (struct fgevent *fgev)
 
         serial_size = FGEVENT_HEADER_SIZE + header.length;
 
-        serial_buf = malloc (serial_size);
+        serial_buf = (unsigned char *) malloc (serial_size);
         if (serial_buf == NULL)
           {
-            for (int i = 0; i < header.length + 1; i++)
+            for (size_t i = 0; i < header.length + 1; i++)
               {
                 n = Serial.readBytes (&c, 1);
                 if (n < 0) break;
@@ -123,7 +123,7 @@ int readFgeventFromSerial (struct fgevent *fgev)
             return -1;
           }
 
-        for (int i = 0; i < serial_size; i++)
+        for (size_t i = 0; i < serial_size; i++)
           {
             if (i < FGEVENT_HEADER_SIZE)
               {
@@ -153,7 +153,7 @@ int readFgeventFromSerial (struct fgevent *fgev)
       }
     else
       {
-        memcpy (fgev, header, FGEVENT_HEADER_SIZE);
+        memcpy (fgev, &header, FGEVENT_HEADER_SIZE);
       }
 
     free (serial_buf);
@@ -186,7 +186,7 @@ void loop()
 
               temperatureX10 = (int32_t)(lastTemperature * 10);
 
-              ansev.id = FG_TEMP;
+              ansev.id = FG_TEMP_RESULT;
               ansev.receiver = fgev.sender;
               ansev.writeback = 0;
               ansev.length = 1;
